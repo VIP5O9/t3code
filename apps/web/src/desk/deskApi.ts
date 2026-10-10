@@ -7,6 +7,7 @@ import {
   DESK_EVENTS_PATH,
   DESK_POST_PATH,
   DESK_STATE_PATH,
+  DeskEvent,
   DeskMessage,
   DeskPostResponse,
   DeskSeat,
@@ -121,8 +122,9 @@ export interface DeskEventHandlers {
  * One EventSource. Returns a close function. Reconnecting is the caller's job,
  * because the browser's own retry cannot be given the backoff the room needs.
  */
-const decodeMessage = Schema.decodeUnknownOption(DeskMessage);
-const decodeSeats = Schema.decodeUnknownOption(Schema.Array(DeskSeat));
+// Each frame's `data` is the whole DeskEvent envelope ({type, message} or {type, seats}),
+// as the contract documents; the SSE `event:` name only mirrors its `type`.
+const decodeEvent = Schema.decodeUnknownOption(DeskEvent);
 
 export function openDeskEvents(handlers: DeskEventHandlers): () => void {
   const url = resolvePrimaryEnvironmentHttpUrl(DESK_EVENTS_PATH);
@@ -135,14 +137,14 @@ export function openDeskEvents(handlers: DeskEventHandlers): () => void {
     }
   };
   source.addEventListener("open", () => handlers.onOpen());
-  source.addEventListener("message", (event) => {
-    const message = decodeMessage(payload(event));
-    if (Option.isSome(message)) handlers.onMessage(message.value);
-  });
-  source.addEventListener("seats", (event) => {
-    const seats = decodeSeats(payload(event));
-    if (Option.isSome(seats)) handlers.onSeats(seats.value);
-  });
+  const dispatch = (event: Event) => {
+    const decoded = decodeEvent(payload(event));
+    if (Option.isNone(decoded)) return;
+    if (decoded.value.type === "message") handlers.onMessage(decoded.value.message);
+    else handlers.onSeats(decoded.value.seats);
+  };
+  source.addEventListener("message", dispatch);
+  source.addEventListener("seats", dispatch);
   source.addEventListener("error", () => handlers.onError());
   return () => source.close();
 }
